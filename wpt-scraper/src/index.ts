@@ -1,6 +1,6 @@
-import { Players, Tournaments } from "./types.js";
-import { getPlayers } from "./players.js";
-import { getAllTournaments, getTournament } from "./tournaments.js";
+import { Players, Tournaments } from "wpt-scraper-types";
+import { getPlayers } from "./players";
+import { getAllTournaments } from "./tournaments";
 
 async function main() {
   let players: Players = {};

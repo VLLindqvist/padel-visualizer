@@ -1,0 +1,15 @@
+{
+  "name": "wpt-scraper-types",
+  "version": "1.0.0",
+  "main": "main.ts",
+  "description": "",
+  "engines": {
+    "npm": ">=8.0.0 <9.0.0",
+    "node": ">=16.0.0 <17.0.0"
+  },
+  "author": "VLLindqvist",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^4.8.4"
+  }
+}

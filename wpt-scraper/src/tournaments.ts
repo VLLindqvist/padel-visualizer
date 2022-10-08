@@ -4,7 +4,6 @@ import fetch, { Headers, RequestInit } from "node-fetch";
 import {
   TournamentsPartialData,
   Tournament,
-  PlayerYearlyStats,
   TournamentGeneral,
   WptResponse,
   Match,
@@ -18,10 +17,14 @@ import {
   TournamentType,
   PlayerId,
   Tournaments,
-} from "./types.js";
-import { TournamentPhase, Matches, MatchId, TournamentCategory, SetResults } from "./types";
+  TournamentPhase,
+  Matches,
+  MatchId,
+  TournamentCategory,
+  SetResults,
+  YearString,
+} from "wpt-scraper-types";
 import { DATE_REGEX, isDev, isInitialScrape, REAL_DATE_REGEX } from "./constants.js";
-import { YearString } from "./utilityTypes";
 
 async function getTournamentRegisteredTeams(url: string): Promise<TournamentRegisteredTeam[]> {
   function fetchFunction() {

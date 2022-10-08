@@ -159,3 +159,5 @@ export type TournamentsPartialData = Pick<
   Tournament,
   "url" | "pageUrl" | "name" | "year" | "dateFrom" | "dateTo" | "category" | "place" | "type" | "posterUrl" | "images"
 >;
+
+export * as UtilityTypes from "./utilityTypes";

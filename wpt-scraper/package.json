@@ -11,7 +11,7 @@
     "build": "etsc"
   },
   "author": "VLLindqvist",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@types/country-data": "^0.0.2",
     "@types/node": "^16.11.64",
@@ -20,7 +20,8 @@
     "esbuild": "^0.15.10",
     "esbuild-node-tsc": "^2.0.4",
     "rimraf": "^3.0.2",
-    "typescript": "^4.8.4"
+    "typescript": "^4.8.4",
+    "wpt-scraper-types": "file:../types"
   },
   "dependencies": {
     "cheerio": "^1.0.0-rc.12",

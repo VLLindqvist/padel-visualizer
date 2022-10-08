@@ -3,9 +3,9 @@ import FormData from "form-data";
 import fetch, { Headers, RequestInit } from "node-fetch";
 import { countries } from "country-data";
 
-import languageHelper, { CourtPosition } from "./languageHelper.js";
-import { PlayerStats, PlayerTournamentPositions, WptResponse } from "./types";
+import languageHelper, { CourtPosition } from "./languageHelper";
 import {
+  PlayerTournamentPositions,
   PlayerRankingData,
   PlayerCategory,
   PlayerRankingsResponse,
@@ -16,9 +16,9 @@ import {
   PlayersRaceStats,
   RaceStats,
   PlayerId,
-} from "./types.js";
-import { isDev, RACE_LINK, YEAR_REGEX } from "./constants.js";
-import { YearString } from "./utilityTypes.js";
+  YearString,
+} from "wpt-scraper-types";
+import { isDev, RACE_LINK, YEAR_REGEX } from "./constants";
 
 async function getPlayerRankings(url?: string): Promise<PlayerRankingData[]> {
   function fetchFunction(section: number) {
