@@ -1,0 +1,31 @@
+{
+  "name": "wpt-scrape",
+  "version": "1.0.0",
+  "description": "",
+  "engines": {
+    "npm": ">=8.0.0 <9.0.0",
+    "node": ">=16.0.0 <17.0.0"
+  },
+  "scripts": {
+    "start": "etsc && node ./dist",
+    "build": "etsc"
+  },
+  "author": "VLLindqvist",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/country-data": "^0.0.2",
+    "@types/node": "^16.11.64",
+    "@types/node-fetch": "^2.6.2",
+    "cpy": "^9.0.1",
+    "esbuild": "^0.15.10",
+    "esbuild-node-tsc": "^2.0.4",
+    "rimraf": "^3.0.2",
+    "typescript": "^4.8.4"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "country-data": "^0.0.31",
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.6.7"
+  }
+}
