@@ -1,6 +1,9 @@
 import { Players, Tournaments } from "wpt-scraper-types";
 import { getPlayers } from "./players";
 import { getAllTournaments } from "./tournaments";
+import * as dotenv from "dotenv";
+
+dotenv.config();
 
 async function main() {
   let players: Players = {};
