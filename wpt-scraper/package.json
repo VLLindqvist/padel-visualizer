@@ -26,7 +26,9 @@
   "dependencies": {
     "cheerio": "^1.0.0-rc.12",
     "country-data": "^0.0.31",
+    "dotenv": "^16.0.3",
     "form-data": "^4.0.0",
+    "mysql2": "^2.3.3",
     "node-fetch": "^2.6.7"
   }
 }
