@@ -1,0 +1,22 @@
+
+.player-card {
+    @apply text-white px-4 py-8 shadow-md;
+    max-width: 1200px;
+    max-height: 300px;
+
+    @media screen and (max-width: 1200px ) {
+        width: 100%;
+    }
+}
+
+.glass-style {
+    @apply bg-white bg-opacity-10 backdrop-filter backdrop-blur-md;
+}
+
+.info-heading {
+    @apply text-gray-300 text-sm;
+}
+
+.lg-stats {
+    @apply text-3xl text-orange-500;
+}

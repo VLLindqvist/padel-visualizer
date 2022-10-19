@@ -1,0 +1,9 @@
+
+
+.layout {
+    @apply flex flex-col items-center space-y-8 p-24 text-white;
+
+    @media screen and (max-width: 1000px) {
+        @apply py-24 px-8;
+    }
+}
