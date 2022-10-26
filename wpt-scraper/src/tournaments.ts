@@ -1,6 +1,8 @@
 import { CheerioAPI, load as cheerioLoad } from "cheerio";
 import FormData from "form-data";
+import { DateTime } from "luxon";
 import fetch, { Headers, RequestInit } from "node-fetch";
+import replaceSpecialCharacters from "replace-special-characters";
 import {
   TournamentsPartialData,
   Tournament,
@@ -11,23 +13,33 @@ import {
   MatchResults,
   TournamentRoundInfo,
   PlayerCategory,
-  AllTournamentsPerYearResponse,
   TournamentRegisteredTeam,
-  SQLDate,
   TournamentType,
   PlayerId,
   Tournaments,
   TournamentPhase,
-  Matches,
-  MatchId,
   TournamentCategory,
   SetResults,
   YearString,
+  TournamentPartialData,
 } from "wpt-scraper-types";
-import { DATE_REGEX, isDev, isInitialScrape, REAL_DATE_REGEX } from "./constants.js";
+import Cache from "./cache.js";
+import {
+  DATE_REGEX,
+  isDev,
+  NUMBER_OF_RETRIES,
+  REAL_DATE_REGEX,
+  RETRY_TIMEOUT,
+  TOURNAMENT_BASE_URL,
+  TOURNAMENT_PAGE_BASE_URL,
+} from "./constants.js";
+import { getTournamentsPartialFromDB, insertTournamentsInDb } from "./db/tournaments.js";
+import { scrapePlayers } from "./players.js";
+import { existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "fs";
+import cloneDeep from "lodash.clonedeep";
 
-async function getTournamentRegisteredTeams(url: string): Promise<TournamentRegisteredTeam[]> {
-  function fetchFunction() {
+async function scrapeTournamentRegisteredTeams(url: string): Promise<TournamentRegisteredTeam[]> {
+  async function fetchFunction() {
     const headers = new Headers();
     headers.append("x-requested-with", "XMLHttpRequest");
     headers.append("Cookie", "language=en");
@@ -43,7 +55,41 @@ async function getTournamentRegisteredTeams(url: string): Promise<TournamentRegi
       redirect: "follow",
     };
 
-    return fetch(url, options);
+    const cacheKey = `${url}----registrations`;
+
+    let data = Cache.nc.get(cacheKey) as WptResponse | undefined;
+
+    if (!data) {
+      let retries = 0;
+      while (true) {
+        const res = await fetch(url, options);
+
+        if (!res.ok) {
+          if (retries <= NUMBER_OF_RETRIES) {
+            ++retries;
+            await new Promise<void>((r) =>
+              setTimeout(() => {
+                r();
+              }, RETRY_TIMEOUT),
+            );
+            continue;
+          }
+          throw { code: 1 };
+        }
+
+        data = await res.json();
+        break;
+      }
+
+      if (!data!.res) {
+        throw { code: 2 };
+      }
+    }
+    data = data!;
+
+    Cache.nc.set(cacheKey, data);
+
+    return data;
   }
 
   function parseHTML($: CheerioAPI): TournamentRegisteredTeam[] | undefined {
@@ -70,15 +116,27 @@ async function getTournamentRegisteredTeams(url: string): Promise<TournamentRegi
             let i = 0;
             let players = [] as unknown as [PlayerId | string, PlayerId | string];
             for (const playerUrlContainer of playerUrlContainers) {
-              let playerUrl = playerUrlContainer.attribs.href.trim().replace("jugadores", "en/players");
-              if (!playerUrl) {
+              let playerId: PlayerId = playerUrlContainer.attribs.href.trim();
+              if (!playerId) {
                 const playerNamesContainer = $(".c-teams__players", container)[i < 2 ? 0 : 1];
-                playerUrl = $(`.c-teams__name:nth-of-type(${i === 0 ? 1 : 2})`, playerNamesContainer)
+                playerId = $(`.c-teams__name:nth-of-type(${i === 0 ? 1 : 2})`, playerNamesContainer)
                   .text()
-                  .trim();
+                  .trim()
+                  .toLowerCase()
+                  .replace(/  +/g, " ") // Replace multiple spaces with one space
+                  .split(" ")
+                  .join("-");
+                playerId = replaceSpecialCharacters(playerId);
+              }
+              if (playerId.endsWith("/")) {
+                const arr = playerId.split("/");
+                playerId = arr[arr.length - 2];
+              } else {
+                const arr = playerId.split("/");
+                playerId = arr[arr.length - 1];
               }
 
-              players.push(playerUrl);
+              players.push(playerId);
               ++i;
               if (i > 2) break;
             }
@@ -92,25 +150,40 @@ async function getTournamentRegisteredTeams(url: string): Promise<TournamentRegi
 
       return registeredTeams;
     } catch (err) {
-      console.error(`[getTournamentRegisteredTeams]: Error when parsing data for ${url}: ${err}`);
+      console.error(`[scrapeTournamentRegisteredTeams]: Error when parsing data for ${url}: ${err}`);
     }
   }
 
-  const res = await fetchFunction();
-
-  if (!res.ok) {
-    throw new Error(`[getTournamentRegisteredTeams]: Response for ${url} not ok`);
+  let data: WptResponse;
+  try {
+    data = await fetchFunction();
+  } catch (_err) {
+    const err = _err as any;
+    if (err.code === 1) {
+      throw new Error(`[scrapeTournamentRegisteredTeams]: Response ${url} not ok`);
+    } else if (err.code === 2) {
+      console.log(`[scrapeTournamentRegisteredTeams] Response for ${url} no good`);
+      return [];
+    }
   }
-  const data = (await res.json()) as WptResponse;
-  if (!data.res) throw new Error(`[getTournamentRegisteredTeams] Response for ${url} no good`);
 
-  const { data: tournamentRegisteredTeams } = data;
+  const { data: registeredTeamsHTML } = data!;
 
-  return tournamentRegisteredTeams !== "" ? parseHTML(cheerioLoad(tournamentRegisteredTeams)) ?? [] : [];
+  const tournamentRegisteredTeams = registeredTeamsHTML !== "" ? parseHTML(cheerioLoad(registeredTeamsHTML)) ?? [] : [];
+
+  let playersToScrape: string[] = [];
+  for (const registeredTeam of tournamentRegisteredTeams) {
+    for (const playerId of registeredTeam.players) {
+      playersToScrape = [...playersToScrape, playerId];
+    }
+  }
+  await scrapePlayers(playersToScrape);
+
+  return tournamentRegisteredTeams;
 }
 
-async function getTournamentGeneral(url: string): Promise<TournamentGeneral> {
-  function fetchFunction() {
+async function scrapeTournamentGeneral(url: string): Promise<TournamentGeneral> {
+  async function fetchFunction() {
     const headers = new Headers();
     headers.append("x-requested-with", "XMLHttpRequest");
     headers.append("Cookie", "language=en");
@@ -126,7 +199,41 @@ async function getTournamentGeneral(url: string): Promise<TournamentGeneral> {
       redirect: "follow",
     };
 
-    return fetch(url, options);
+    const cacheKey = `${url}----info`;
+
+    let data = Cache.nc.get(cacheKey) as WptResponse | undefined;
+
+    if (!data) {
+      let retries = 0;
+      while (true) {
+        const res = await fetch(url, options);
+
+        if (!res.ok) {
+          if (retries <= NUMBER_OF_RETRIES) {
+            ++retries;
+            await new Promise<void>((r) =>
+              setTimeout(() => {
+                r();
+              }, RETRY_TIMEOUT),
+            );
+            continue;
+          }
+          throw { code: 1 };
+        }
+
+        data = await res.json();
+        break;
+      }
+
+      if (!data!.res) {
+        throw { code: 2 };
+      }
+    }
+    data = data!;
+
+    Cache.nc.set(cacheKey, data);
+
+    return data;
   }
 
   function parseHTML($: CheerioAPI): TournamentGeneral | undefined {
@@ -151,25 +258,29 @@ async function getTournamentGeneral(url: string): Promise<TournamentGeneral> {
         }
       }
     } catch (err) {
-      console.error(`[getTournamentGeneral]: Error when parsing data for ${url}: ${err}`);
+      console.error(`[scrapeTournamentGeneral]: Error when parsing data for ${url}: ${err}`);
     }
   }
 
-  const res = await fetchFunction();
-
-  if (!res.ok) {
-    throw new Error(`[getTournamentGeneral]: Response for ${url} not ok`);
+  let data: WptResponse;
+  try {
+    data = await fetchFunction();
+  } catch (_err) {
+    const err = _err as any;
+    if (err.code === 1) {
+      throw new Error(`[scrapeTournamentGeneral]: Response ${url} not ok`);
+    } else if (err.code === 2) {
+      throw new Error(`[scrapeTournamentGeneral] Response for ${url} no good`);
+    }
   }
-  const data = (await res.json()) as WptResponse;
-  if (!data.res) throw new Error(`[getTournamentGeneral] Response for ${url} no good`);
 
-  const { data: tournamentGeneralHtml } = data;
+  const { data: tournamentGeneralHtml } = data!;
 
   return tournamentGeneralHtml !== "" ? parseHTML(cheerioLoad(tournamentGeneralHtml)) ?? {} : {};
 }
 
-async function getTournamentPhases(url: string): Promise<TournamentPhase[]> {
-  function fetchFunction() {
+async function scrapeTournamentPhases(url: string): Promise<TournamentPhase[]> {
+  async function fetchFunction() {
     const headers = new Headers();
     headers.append("x-requested-with", "XMLHttpRequest");
     headers.append("Cookie", "language=en");
@@ -185,7 +296,41 @@ async function getTournamentPhases(url: string): Promise<TournamentPhase[]> {
       redirect: "follow",
     };
 
-    return fetch(url, options);
+    const cacheKey = `${url}----results`;
+
+    let data = Cache.nc.get(cacheKey) as WptResponse | undefined;
+
+    if (!data) {
+      let retries = 0;
+      while (true) {
+        const res = await fetch(url, options);
+
+        if (!res.ok) {
+          if (retries <= NUMBER_OF_RETRIES) {
+            ++retries;
+            await new Promise<void>((r) =>
+              setTimeout(() => {
+                r();
+              }, RETRY_TIMEOUT),
+            );
+            continue;
+          }
+          throw { code: 1 };
+        }
+
+        data = await res.json();
+        break;
+      }
+
+      if (!data!.res) {
+        throw { code: 2 };
+      }
+    }
+    data = data!;
+
+    Cache.nc.set(cacheKey, data);
+
+    return data;
   }
 
   function parseHTML($: CheerioAPI): TournamentPhase[] | undefined {
@@ -200,28 +345,33 @@ async function getTournamentPhases(url: string): Promise<TournamentPhase[]> {
         .toArray() as TournamentPhase[];
       return options;
     } catch (err) {
-      console.error(`[getTournamentGeneral]: Error when parsing data for ${url}: ${err}`);
+      console.error(`[scrapeTournamentGeneral]: Error when parsing data for ${url}: ${err}`);
     }
   }
 
-  const res = await fetchFunction();
-
-  if (!res.ok) {
-    throw new Error(`[getTournamentGeneral]: Response for ${url} not ok`);
+  let data: WptResponse;
+  try {
+    data = await fetchFunction();
+  } catch (_err) {
+    const err = _err as any;
+    if (err.code === 1) {
+      throw new Error(`[scrapeTournamentPhases]: Response ${url} not ok`);
+    } else if (err.code === 2) {
+      console.log(`[scrapeTournamentPhases] Response for ${url} no good`);
+      return [];
+    }
   }
-  const data = (await res.json()) as WptResponse;
-  if (!data.res) throw new Error(`[getTournamentGeneral] Response for ${url} no good`);
 
-  const { data: tournamentResultsHtml } = data;
+  const { data: tournamentResultsHtml } = data!;
 
   return tournamentResultsHtml !== "" ? parseHTML(cheerioLoad(tournamentResultsHtml)) ?? [] : [];
 }
 
-async function getTournamentMatches(
+async function scrapeTournamentMatches(
   url: string,
   phase: TournamentPhase,
   category: TournamentCategory,
-): Promise<Matches> {
+): Promise<Match[]> {
   async function fetchFunction(_category?: "Femenino" | "Masculino") {
     const headers = new Headers();
     headers.append("x-requested-with", "XMLHttpRequest");
@@ -244,36 +394,67 @@ async function getTournamentMatches(
       redirect: "follow",
     };
 
-    const res = await fetch(url, options);
-    if (!res.ok) {
-      throw new Error(`[getTournamentMatches]: Response for ${url} not ok`);
+    const cacheKey = `${url}----results-phase${phase}-category${_category}`;
+
+    let data = Cache.nc.get(cacheKey) as WptResponse | undefined;
+
+    if (!data) {
+      let retries = 0;
+      while (true) {
+        const res = await fetch(url, options);
+
+        if (!res.ok) {
+          if (retries <= NUMBER_OF_RETRIES) {
+            ++retries;
+            await new Promise<void>((r) =>
+              setTimeout(() => {
+                r();
+              }, RETRY_TIMEOUT),
+            );
+            continue;
+          }
+          throw { code: 1 };
+        }
+
+        data = await res.json();
+        break;
+      }
+
+      if (!data!.res) {
+        throw { code: 2 };
+      }
     }
-    const data = (await res.json()) as WptResponse;
-    if (!data.res) throw new Error(`[getTournamentMatches] Response for ${url} no good`);
+    data = data!;
+
+    Cache.nc.set(cacheKey, data);
 
     return data;
   }
 
-  function parseHTML($: CheerioAPI, _category: PlayerCategory): Matches | undefined {
+  function parseHTML($: CheerioAPI, _category: PlayerCategory): Match[] | undefined {
     try {
       const resultsContainers = $(".c-results-wrapper");
-      let matches: Matches = {};
+      let matches: Match[] = [];
 
+      let i = 0;
       for (const resultsContainer of resultsContainers) {
         try {
-          const roundStr = $(".c-results-title", resultsContainer).text().split("-")[0]!.trim().toLowerCase();
+          const [phaseStr, roundStr] = $(".c-results-title", resultsContainer)
+            .text()
+            .split("-")
+            .map((s) => s.trim().toLowerCase());
           let round: TournamentRound;
           if (phase === "main_draw") {
-            if (roundStr.includes("final")) {
-              round = "final";
-            } else if (roundStr.includes("semifinals")) {
+            if (roundStr.includes("semifinal")) {
               round = "semi";
-            } else if (roundStr.includes("quarterfinals")) {
+            } else if (roundStr.includes("quarterfinal")) {
               round = "quarter";
             } else if (roundStr.includes("1/8")) {
               round = "roundOfEight";
-            } else {
+            } else if (roundStr.includes("1/16")) {
               round = "roundOfSixteen";
+            } else {
+              round = "final";
             }
           } else {
             if (roundStr.includes("round") && roundStr.includes("1")) {
@@ -282,8 +463,12 @@ async function getTournamentMatches(
               round = "2";
             } else if (roundStr.includes("round") && roundStr.includes("3")) {
               round = "3";
-            } else {
+            } else if (roundStr.includes("round") && roundStr.includes("4")) {
               round = "4";
+            } else if (roundStr.includes("round") && roundStr.includes("5")) {
+              round = "5";
+            } else {
+              round = "6";
             }
           }
           const roundInfo = {
@@ -291,11 +476,8 @@ async function getTournamentMatches(
             phase,
           } as TournamentRoundInfo;
 
-          let i = 0;
           const matchContainers = $(resultsContainer).nextUntil(".c-results-wrapper");
           for (const matchContainer of matchContainers) {
-            const matchId = `${phase}-${round}-${i}` as MatchId;
-
             const resultContainer = $(".c-teams__iandt:nth-of-type(2)", matchContainer);
             let fullResStr = $("span", resultContainer).text();
 
@@ -311,13 +493,19 @@ async function getTournamentMatches(
             for (const resultStr of resultArr) {
               let setResults: SetResults = [0, 0];
               const tieBreakStr = resultStr.match(/\((.*)\)/)?.pop();
-              let tieBreak: number = 0;
               if (!!tieBreakStr) {
-                resultStr.replace(`(${tieBreakStr})`, "");
-                setResults.push(Number.parseInt(tieBreakStr.trim()));
+                resultStr.replace(`(${tieBreakStr})`, tieBreakStr);
+                const tieBreak = Number.parseInt(tieBreakStr.trim());
+                setResults.push(tieBreak);
+                if (Number.isNaN(tieBreak)) {
+                  console.log("NaN-value found for match tie break result", tieBreak);
+                }
               }
 
               const resultsNum = resultStr.split("-").map((s) => Number.parseInt(s.trim()));
+              if (Number.isNaN(resultsNum)) {
+                console.log("NaN-value found for match result", resultsNum);
+              }
               const firstTeamRes = resultsNum[0];
               const secondTeamRes = resultsNum[1];
 
@@ -341,18 +529,30 @@ async function getTournamentMatches(
             let k = 0;
             const playerContainers = $(".c-trigger", matchContainer);
             for (const playerContainer of playerContainers) {
-              let playerUrl = playerContainer.attribs.href.trim().replace("jugadores", "en/players");
-              if (!playerUrl) {
+              let playerId: PlayerId = playerContainer.attribs.href.trim().replace("jugadores", "en/players");
+              if (!playerId) {
                 const playerNamesContainer = $(".c-teams__players", matchContainer)[k < 2 ? 0 : 1];
-                playerUrl = $(`.c-teams__name:nth-of-type(${k === 0 || k === 2 ? 1 : 2})`, playerNamesContainer)
+                playerId = $(`.c-teams__name:nth-of-type(${k === 0 || k === 2 ? 1 : 2})`, playerNamesContainer)
                   .text()
-                  .trim();
+                  .trim()
+                  .toLowerCase()
+                  .replace(/  +/g, " ") // Replace multiple spaces with one space
+                  .split(" ")
+                  .join("-");
+                playerId = replaceSpecialCharacters(playerId);
+              }
+              if (playerId.endsWith("/")) {
+                const arr = playerId.split("/");
+                playerId = arr[arr.length - 2];
+              } else {
+                const arr = playerId.split("/");
+                playerId = arr[arr.length - 1];
               }
 
               if (k < 2) {
-                firstTeam.push(playerUrl);
+                firstTeam.push(playerId);
               } else {
-                secondTeam.push(playerUrl);
+                secondTeam.push(playerId);
               }
               ++k;
               if (k > 3) break;
@@ -367,10 +567,7 @@ async function getTournamentMatches(
               category: _category,
               results,
             };
-            matches = {
-              ...matches,
-              [matchId]: match,
-            };
+            matches = [...matches, match];
             ++i;
           }
         } catch (err) {
@@ -380,15 +577,27 @@ async function getTournamentMatches(
 
       return matches;
     } catch (err) {
-      console.error(`[getTournamentGeneral]: Error when parsing data for ${url}: ${err}`);
+      console.error(`[scrapeTournamentGeneral]: Error when parsing data for ${url}: ${err}`);
     }
   }
 
   if (category === "both") {
-    const dataArr = await Promise.all([fetchFunction("Masculino"), fetchFunction("Femenino")]);
-    const [{ data: tournamentResultsHtmlMale }, { data: tournamentResultsHtmlFemale }] = dataArr;
+    let dataArr: [WptResponse, WptResponse];
+    try {
+      dataArr = await Promise.all([fetchFunction("Masculino"), fetchFunction("Femenino")]);
+    } catch (_err) {
+      const err = _err as any;
+      if (err.code === 1) {
+        throw new Error(`[scrapeTournamentMatches]: Response ${url} not ok`);
+      } else if (err.code === 2) {
+        console.log(`[scrapeTournamentMatches] Response for ${url} no good`);
+        return [];
+      }
+    }
 
-    let matches: Matches = {};
+    const [{ data: tournamentResultsHtmlMale }, { data: tournamentResultsHtmlFemale }] = dataArr!;
+
+    let matches: Match[] = [];
     if (tournamentResultsHtmlMale !== "") {
       matches = { ...matches, ...(parseHTML(cheerioLoad(tournamentResultsHtmlMale), "male") ?? {}) };
     }
@@ -398,15 +607,27 @@ async function getTournamentMatches(
 
     return matches;
   } else {
-    const data = await fetchFunction();
-    const { data: tournamentResultsHtml } = data;
+    let data: WptResponse;
+    try {
+      data = await fetchFunction();
+    } catch (_err) {
+      const err = _err as any;
+      if (err.code === 1) {
+        throw new Error(`[scrapeTournamentPhases]: Response ${url} not ok`);
+      } else if (err.code === 2) {
+        console.log(`[scrapeTournamentPhases] Response for ${url} no good`);
+        return [];
+      }
+    }
 
-    return tournamentResultsHtml !== "" ? parseHTML(cheerioLoad(tournamentResultsHtml), category) ?? {} : {};
+    const { data: tournamentResultsHtml } = data!;
+
+    return tournamentResultsHtml !== "" ? parseHTML(cheerioLoad(tournamentResultsHtml), category) ?? [] : [];
   }
 }
 
-async function getTournamentsPartialData(url?: string): Promise<TournamentsPartialData[]> {
-  function fetchFunction(year: number) {
+async function scrapeTournamentsPartialData(ids?: string[]): Promise<TournamentsPartialData> {
+  async function fetchFunction(year: number) {
     const headers = new Headers();
     headers.append("x-requested-with", "XMLHttpRequest");
     headers.append("Cookie", "language=en");
@@ -421,39 +642,77 @@ async function getTournamentsPartialData(url?: string): Promise<TournamentsParti
       redirect: "follow",
     };
 
-    return fetch(`https://www.worldpadeltour.com/search-torneos/-/${year}`, options);
+    const fetchUrl = `https://www.worldpadeltour.com/search-torneos/-/${year}`;
+
+    let data = Cache.nc.get(fetchUrl) as WptResponse | undefined;
+
+    if (!data) {
+      let retries = 0;
+      while (true) {
+        const res = await fetch(fetchUrl, options);
+
+        if (!res.ok) {
+          if (retries <= NUMBER_OF_RETRIES) {
+            ++retries;
+            await new Promise<void>((r) =>
+              setTimeout(() => {
+                r();
+              }, RETRY_TIMEOUT),
+            );
+            continue;
+          }
+          throw { code: 1 };
+        }
+
+        data = await res.json();
+        break;
+      }
+
+      if (!data!.res) {
+        throw { code: 2 };
+      }
+    }
+    data = data!;
+
+    Cache.nc.set(fetchUrl, data);
+
+    return data;
   }
 
-  function parseHTML($: CheerioAPI): TournamentsPartialData[] {
-    let tournaments: TournamentsPartialData[] = [];
+  function parseHTML($: CheerioAPI): TournamentsPartialData {
+    let tournaments: TournamentsPartialData = {};
 
     for (const tournamentContainer of $(".c-tournaments__container")) {
       try {
+        let id: string = "";
+        let pageUrl: string = "";
+        const urls = $(".c-tournaments__triggers", tournamentContainer).children("a");
+        for (const _url of urls) {
+          if ($(_url).text().toLowerCase().includes("info")) {
+            pageUrl = _url.attribs.href;
+            if (pageUrl.endsWith("/")) {
+              const arr = pageUrl.split("/");
+              id = arr[arr.length - 3];
+            } else {
+              const arr = pageUrl.split("/");
+              id = arr[arr.length - 2];
+            }
+          }
+        }
+        if (ids && !ids.includes(id)) continue;
+
         const posterUrl = $(".c-tournaments__poster", tournamentContainer)
           .children(".c-tournaments__img")!
           .css("background-image")!
           .match(/\((.*)\)/)!
           .pop()!
           .trim();
-
-        let url: string = "";
-        let pageUrl: string = "";
-        const urls = $(".c-tournaments__triggers", tournamentContainer).children("a");
-        for (const _url of urls) {
-          if ($(_url).text().toLowerCase().includes("info")) {
-            pageUrl = _url.attribs.href;
-            url = pageUrl.replace(
-              "https://www.worldpadeltour.com/en/tournaments/",
-              "https://www.worldpadeltour.com/info-torneos/",
-            );
-          }
-        }
         const [dateFrom, dateTo] = $(".c-tournaments__date", tournamentContainer)!
           .text()!
           .match(DATE_REGEX)!
           .map((ds) => ds.match(REAL_DATE_REGEX)?.[0])
           .filter((ds) => !!ds)
-          .map((ds) => ds!.split("/").reverse().join("-") as SQLDate);
+          .map((ds) => new Date(ds!.split("/").reverse().join("-")));
         const name = $(".c-tournaments__title", tournamentContainer).text()!;
         const categoryStr = $(".c-tournaments__cat", tournamentContainer).text().toLowerCase();
         let category: TournamentCategory;
@@ -465,7 +724,7 @@ async function getTournamentsPartialData(url?: string): Promise<TournamentsParti
           category = "both";
         }
         const place = $(".c-tournaments__city", tournamentContainer).text().replace(/\..*/, "").trim();
-        const typeStr = $(".c-tournaments__tag", tournamentContainer).text();
+        const typeStr = $(".c-tournaments__tag", tournamentContainer).text().toUpperCase();
         let type: TournamentType;
         if (typeStr.includes("MASTER-FINAL")) {
           type = "masterfinal";
@@ -483,18 +742,24 @@ async function getTournamentsPartialData(url?: string): Promise<TournamentsParti
         const firstImage = $(".c-tournaments__top-card", tournamentContainer)
           .children(".c-tournaments__header")!
           .css("background")!
-          .match(/\((.*)\)/)!
+          .match(/\('(.*)'\)/)!
           .pop()!
           .trim();
         const images = [firstImage];
         const yearInName = name.match(/\d{4}/g)?.[0] as YearString;
-        const yearFromDate = dateFrom.split("-")[0] as YearString;
+        const yearFromDate = dateFrom.getFullYear() as unknown as YearString;
         let year: YearString = yearInName ? (name.trim().endsWith(yearInName) ? yearInName : "2022") : "2022";
         if (Number.isNaN(Number.parseInt(year)) && yearFromDate) {
           year = yearFromDate;
         }
 
-        tournaments.push({ url, pageUrl, dateFrom, dateTo, year, category, name, place, type, posterUrl, images });
+        const data = { id, pageUrl, dateFrom, dateTo, year, category, name, place, type, posterUrl, images };
+
+        tournaments[id] = data;
+
+        if (ids && Object.keys(ids).every((_id) => Object.keys(tournaments).includes(_id))) {
+          break;
+        }
       } catch (err) {
         console.error(
           `Error when parsing data for ${$(".c-player-card__name", tournamentContainer).text()} (${
@@ -511,82 +776,133 @@ async function getTournamentsPartialData(url?: string): Promise<TournamentsParti
   const thisYear = new Date().getFullYear();
   const firstYear = 2016;
   let yearsToScrape = [thisYear];
-  if (isInitialScrape || !!url) {
-    for (let i = firstYear; i < thisYear; ++i) {
-      yearsToScrape.push(i);
-    }
+  for (let i = thisYear; i >= firstYear; --i) {
+    yearsToScrape.push(i);
   }
 
-  let allTournamentsPartial: TournamentsPartialData[] = [];
+  let allTournamentsPartial: TournamentsPartialData = {};
 
   for (const year of yearsToScrape) {
-    const res = await fetchFunction(year);
-
-    if (!res.ok) {
-      throw new Error(`[getTournamentsPartialData]: Response for ${year} not ok`);
+    let data: WptResponse;
+    try {
+      data = await fetchFunction(year);
+    } catch (_err) {
+      const err = _err as any;
+      if (err.code === 1) {
+        throw new Error(`[scrapeTournamentsPartialData]: Response ${year} not ok`);
+      } else if (err.code === 2) {
+        console.log(`[scrapeTournamentsPartialData] Response for ${year} no good`);
+        continue;
+      }
     }
-    const data = (await res.json()) as AllTournamentsPerYearResponse;
-    if (!data.res) throw new Error(`[getTournamentsPartialData] Response for ${year} no good`);
 
-    const { data: tournamentHtml } = data;
+    const { data: tournamentHtml } = data!;
 
     if (tournamentHtml !== "") {
-      allTournamentsPartial = [...allTournamentsPartial, ...parseHTML(cheerioLoad(tournamentHtml))];
+      allTournamentsPartial = { ...allTournamentsPartial, ...parseHTML(cheerioLoad(tournamentHtml)) };
     } else {
       break;
     }
-
-    if (!!url && allTournamentsPartial.some((t) => t.url === url)) {
-      const relevantTournament = allTournamentsPartial.find((t) => t.url === url)!;
-      allTournamentsPartial = [relevantTournament];
-      break;
-    }
   }
 
-  return allTournamentsPartial;
+  const tournamentsPartialFromDB = await getTournamentsPartialFromDB();
+
+  // Return partial data, but remove tournaments that was last scraped after they were completed
+  // if they are not explicitily scraped using the "ids" param
+  return ids
+    ? allTournamentsPartial
+    : Object.fromEntries(
+        Object.entries(allTournamentsPartial).filter(([id]) => {
+          if (id in tournamentsPartialFromDB) {
+            const to = DateTime.fromJSDate(tournamentsPartialFromDB[id].dateTo);
+            const lastScraped = DateTime.fromJSDate(tournamentsPartialFromDB[id].lastScraped);
+            if (lastScraped > to) {
+              return false;
+            }
+          }
+
+          return true;
+        }),
+      );
 }
 
-export async function getTournament(
-  partialDataOrUrl: string | TournamentsPartialData,
+async function scrapeTournament(
+  partialData: TournamentPartialData,
+  insertToDb: boolean = true,
 ): Promise<Tournament | undefined> {
-  const url = typeof partialDataOrUrl == "string" ? partialDataOrUrl : partialDataOrUrl.url;
-  const partialData =
-    typeof partialDataOrUrl == "string" ? (await getTournamentsPartialData(url))?.[0] : partialDataOrUrl;
-  if (!partialData) return undefined;
-  const general = await getTournamentGeneral(url);
-  const phases = await getTournamentPhases(url);
-  getTournamentRegisteredTeams(url);
-  let matches: Matches = {};
-
-  for (const phase of phases) {
-    matches = { ...matches, ...(await getTournamentMatches(url, phase, partialData.category)) };
+  if (!partialData) {
+    console.log("Can't call scrapeTournament with undefined partialData");
+    return;
   }
 
-  return {
+  const url = partialData.pageUrl.replace(TOURNAMENT_PAGE_BASE_URL, TOURNAMENT_BASE_URL);
+  if (!partialData) return undefined;
+  const general = await scrapeTournamentGeneral(url);
+  const phases = await scrapeTournamentPhases(url);
+  const registeredTeams = await scrapeTournamentRegisteredTeams(url);
+
+  let matches: Match[] = [];
+  for (const phase of phases) {
+    matches = [...matches, ...(await scrapeTournamentMatches(url, phase, partialData.category))];
+  }
+
+  const tournament: Tournament = {
     ...partialData,
     ...general,
+    registeredTeams,
     matches,
   };
+
+  if (insertToDb) {
+    insertTournamentsInDb({ [tournament.id]: tournament });
+  }
+
+  return tournament;
 }
 
-export async function getAllTournaments(): Promise<Tournaments> {
-  const allTournamentsPartial = await getTournamentsPartialData();
+export async function scrapeTournaments(ids?: string[]): Promise<Tournaments> {
+  if (ids && (!Array.isArray(ids) || (Array.isArray(ids) && !ids.length))) {
+    throw Error('[scrapePlayers] Can\'t give empty array as "ids"');
+  }
 
   let tournaments: Tournaments = {};
+  let tournamentsTemp: Tournaments = {};
 
-  let isFirst = true;
-  for (const tournamentPartial of allTournamentsPartial) {
-    if (isDev) {
-      if (!isFirst) break;
-      else isFirst = false;
-    }
+  if (isDev && existsSync(`.dev/tournaments.json`)) {
+    const file = readFileSync(`.dev/tournaments.json`, { encoding: "utf8" });
+    tournaments = JSON.parse(file);
 
-    const tournament = await getTournament(isDev ? tournamentPartial.url : tournamentPartial);
-
-    if (tournament) {
-      tournaments[tournament.url] = tournament;
+    if (ids) {
+      tournamentsTemp = cloneDeep(tournaments);
+      tournaments = Object.fromEntries(Object.entries(tournaments).filter(([_id]) => ids.includes(_id)));
     }
   }
+
+  if (!isDev || (isDev && ids && ids.some((_id) => !(_id in tournaments)))) {
+    const tournamentsPartial = await scrapeTournamentsPartialData(ids);
+
+    for (const tournamentIdOrPartial of ids ?? Object.values(tournamentsPartial)) {
+      const currentTournamentId =
+        typeof tournamentIdOrPartial === "string" ? tournamentIdOrPartial : tournamentIdOrPartial.id;
+      const tournamentPartial =
+        typeof tournamentIdOrPartial === "string" ? tournamentsPartial[tournamentIdOrPartial] : tournamentIdOrPartial;
+
+      const tournament = await scrapeTournament(tournamentPartial, false);
+
+      if (tournament) {
+        tournaments[currentTournamentId] = tournament;
+      }
+    }
+  }
+
+  if (isDev) {
+    if (!existsSync(".dev")) {
+      mkdirSync(".dev");
+    }
+    writeFileSync(`.dev/tournaments.json`, JSON.stringify({ ...tournamentsTemp, ...tournaments }));
+  }
+
+  insertTournamentsInDb(tournaments);
 
   return tournaments;
 }

@@ -7,13 +7,16 @@
     "node": ">=16.0.0 <17.0.0"
   },
   "scripts": {
-    "start": "etsc && node ./dist",
+    "start": "etsc && NODE_ENV=production node ./dist",
+    "dev": "etsc && node ./dist",
     "build": "etsc"
   },
   "author": "VLLindqvist",
   "license": "MIT",
   "devDependencies": {
     "@types/country-data": "^0.0.2",
+    "@types/lodash.clonedeep": "^4.5.7",
+    "@types/luxon": "^3.0.1",
     "@types/node": "^16.11.64",
     "@types/node-fetch": "^2.6.2",
     "cpy": "^9.0.1",
@@ -28,7 +31,11 @@
     "country-data": "^0.0.31",
     "dotenv": "^16.0.3",
     "form-data": "^4.0.0",
+    "lodash.clonedeep": "^4.5.0",
+    "luxon": "^3.0.4",
     "mysql2": "^2.3.3",
-    "node-fetch": "^2.6.7"
+    "node-cache": "^5.1.2",
+    "node-fetch": "^2.6.7",
+    "replace-special-characters": "^1.2.7"
   }
 }
