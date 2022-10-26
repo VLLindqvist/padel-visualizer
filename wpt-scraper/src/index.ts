@@ -1,26 +1,28 @@
-import { Players, Tournaments } from "wpt-scraper-types";
-import { getPlayers } from "./players";
-import { getAllTournaments } from "./tournaments";
 import * as dotenv from "dotenv";
+import NodeCache from "node-cache";
+
+import Cache from "./cache.js";
+import setupDB from "./db/index.js";
+import { scrapeTournaments } from "./tournaments";
+import { scrapePlayers } from "./players";
+import { isDev } from "./constants.js";
 
 dotenv.config();
 
 async function main() {
-  let players: Players = {};
-  try {
-    players = await getPlayers();
-  } catch (err) {
-    console.error(`Players scraping error: ${err}`);
-  }
-  console.log(players);
+  Cache.nc = new NodeCache();
 
-  let tournaments: Tournaments = {};
   try {
-    tournaments = await getAllTournaments();
+    await scrapeTournaments(isDev ? ["swedish-padel-open-2022", "estrella-damm-menorca-open-2022"] : undefined);
   } catch (err) {
     console.error(`Tournaments scraping error: ${err}`);
   }
-  console.log(tournaments);
+
+  try {
+    await scrapePlayers(isDev ? ["miguel-lamperti"] : undefined);
+  } catch (err) {
+    console.error(`Players scraping error: ${err}`);
+  }
 }
 
 main();

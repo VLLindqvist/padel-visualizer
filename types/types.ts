@@ -1,25 +1,7 @@
-import { MonthAndDaysString, YearString } from "./utilityTypes.js";
+import { AtoZ, YearString } from "./utilityTypes.js";
 
-export type SQLDate = `${YearString}-${MonthAndDaysString}`;
-
-/* ==================== Response Types =========================*/
-export interface PlayerRankingsResponse {
-  res: boolean;
-  data: [string, string];
-}
-
-export interface AllTournamentsPerYearResponse {
-  res: boolean;
-  data: string;
-  total: number;
-  total_results: number;
-}
-
-export interface WptResponse {
-  res: boolean;
-  data: string;
-}
-/* =============================================================*/
+// export type SQLDate = `${YearString}-${MonthAndDaysString}`;
+export type CountryCode = `${AtoZ}${AtoZ}`;
 
 export interface PlayerTournamentPositions {
   winner: number;
@@ -57,9 +39,9 @@ export interface PlayerData {
   firstName: string;
   middleName: string;
   lastName: string;
-  profileUrl: string;
+  id: string;
   profileImgUrl: string;
-  country: string;
+  country: CountryCode;
   currentScore: number;
   consecutiveWins: number;
   totalMatchesPlayed: number;
@@ -68,23 +50,26 @@ export interface PlayerData {
   courtPosition: "left" | "right";
   currentPartner: string;
   birthplace: string;
-  birthdate: SQLDate;
-  height: number;
+  birthdate: Date;
+  height: number | null;
   hometown: string;
   category: PlayerCategory;
   imageUrls: string[];
   raceStats: RaceStats;
 }
 
-export type PlayerId = PlayerData["profileUrl"];
+export type PlayerId = PlayerData["id"];
 
 export interface Players {
-  [url: PlayerId]: PlayerData;
+  [id: PlayerId]: PlayerData;
 }
 
-export type PlayerRankingData = Pick<PlayerData, "profileUrl" | "firstName" | "middleName" | "lastName" | "category">;
+export type PlayerRankingData = Pick<PlayerData, "id" | "firstName" | "middleName" | "lastName" | "category">;
+export interface PlayersRankingData {
+  [id: PlayerId]: PlayerRankingData;
+}
 
-export type TournamentPreRound = "1" | "2" | "3" | "4";
+export type TournamentPreRound = "1" | "2" | "3" | "4" | "5" | "6";
 export type TournamentMainRound = "final" | "semi" | "quarter" | "roundOfEight" | "roundOfSixteen";
 export type TournamentRound = TournamentMainRound | TournamentPreRound;
 export type TournamentPrePhase = "pre_qualy" | "qualy" | "local_qualy" | "final_qualy";
@@ -113,14 +98,6 @@ export type Match = TournamentRoundInfo & {
   results: MatchResults;
 };
 
-export type MatchId = `${
-  | `${TournamentPrePhase}-${"1" | "2" | "3"}`
-  | `main draw-${"final" | "semi" | "quarter" | "roundOfEight" | "roundOfSixteen"}`}-${number}`;
-
-export interface Matches {
-  [id: MatchId]: Match;
-}
-
 export type TournamentCategory = "male" | "female" | "both";
 export type TournamentType = "open" | "master" | "masterfinal" | "challenger" | "exhibition" | "unknown";
 
@@ -134,30 +111,40 @@ export interface TournamentRegisteredTeam {
 }
 
 export interface Tournament extends TournamentGeneral {
-  url: string;
+  id: string;
   pageUrl: string;
   name: string;
   year: YearString;
   place: string;
-  dateFrom: SQLDate;
-  dateTo: SQLDate;
+  dateFrom: Date;
+  dateTo: Date;
   category: TournamentCategory;
   type: TournamentType;
-  matches: Matches;
+  matches: Match[];
   posterUrl: string;
   images: string[];
   registeredTeams?: TournamentRegisteredTeam[];
 }
 
-export type TournamentId = Tournament["url"];
+export type TournamentId = Tournament["id"];
 
 export interface Tournaments {
-  [url: TournamentId]: Tournament;
+  [id: TournamentId]: Tournament;
 }
 
-export type TournamentsPartialData = Pick<
+export type TournamentPartialData = Pick<
   Tournament,
-  "url" | "pageUrl" | "name" | "year" | "dateFrom" | "dateTo" | "category" | "place" | "type" | "posterUrl" | "images"
+  "id" | "pageUrl" | "name" | "year" | "dateFrom" | "dateTo" | "category" | "place" | "type" | "posterUrl" | "images"
 >;
+
+export interface TournamentsPartialData {
+  [id: TournamentId]: TournamentPartialData;
+}
+
+export interface TournamentsPartialDataDb {
+  [id: TournamentId]: Pick<TournamentPartialData, "id" | "pageUrl" | "dateFrom" | "dateTo"> & {
+    lastScraped: Date;
+  };
+}
 
 export * as UtilityTypes from "./utilityTypes";
