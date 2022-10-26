@@ -2,8 +2,10 @@ import Layout from '@components/Layout/Layout';
 import PlayerCard from '@components/PlayerCard/PlayerCard';
 import type { NextPage } from 'next';
 import Head from 'next/head';
-
-const Home: NextPage = () => {
+import { PlayerBasic } from './api/getPlayers';
+const Home: NextPage = (props: any) => {
+  console.log(props);
+  const players = props.data;
   return (
     <>
       <Head>
@@ -11,12 +13,23 @@ const Home: NextPage = () => {
         <link rel="icon" href="/favicon.ico" />
       </Head>
       <Layout>
-        <PlayerCard index={0} />
-        <PlayerCard index={1} />
-        <PlayerCard index={2} />
+        {players.map((player: PlayerBasic, index: number) => (
+          <PlayerCard key={index} playerData={player} />
+        ))}
       </Layout>
     </>
   );
 };
 
 export default Home;
+
+export const getStaticProps = async () => {
+  try {
+    const data = await fetch(`http://localhost:3000/api/getPlayers`);
+    const players = await data.json();
+    console.log('asdasdsa', players);
+    return { props: { data: players.playerData } };
+  } catch (error) {
+    throw Error;
+  }
+};

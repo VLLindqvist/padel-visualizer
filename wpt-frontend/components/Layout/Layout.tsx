@@ -3,12 +3,13 @@ import React from 'react';
 
 interface LayoutProps {
   children: React.ReactNode;
+  header?: boolean;
 }
 
-const Layout = ({ children }: LayoutProps) => {
+const Layout = ({ children, header = true }: LayoutProps) => {
   return (
     <>
-      <Header />
+      {header && <Header />}
       <main className="layout">{children}</main>
     </>
   );

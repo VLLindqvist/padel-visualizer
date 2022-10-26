@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
   images: {
-    domains: ['www.worldpadeltour.com']
+    domains: ['www.worldpadeltour.com', 'www.purecatamphetamine.github.io']
   }
 };
 
