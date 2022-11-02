@@ -81,7 +81,9 @@ export async function insertPlayersInDb(players: Players) {
           player.lastName,
           player.currentScore,
           player.ranking,
-          player.profileImgUrl,
+          player.profileImgUrl.includes("hombre.svg") || player.profileImgUrl.includes("mujer.svg")
+            ? null
+            : player.profileImgUrl,
           player.country in countries ? player.country : null,
           player.birthplace,
           birthdate,
@@ -103,7 +105,7 @@ export async function insertPlayersInDb(players: Players) {
         const countryInfo = countries[player.country];
         countriesParams = [
           ...countriesParams,
-          [player.country, countryInfo.name, `${FLAG_BASE_URL}/${player.country}.png`],
+          [player.country, countryInfo.name, `${FLAG_BASE_URL}/${player.country}`],
         ];
       }
 
@@ -193,10 +195,12 @@ export async function insertPlayersInDb(players: Players) {
   const db = await mysqlConnection();
 
   let query = sql`
-    INSERT IGNORE INTO countries
+    INSERT INTO countries
     (${db.escapeId(countriesColumns)})
     VALUES
-    ${db.escape(countriesParams)};
+    ${db.escape(countriesParams)}
+    ON DUPLICATE KEY UPDATE
+    ${countriesColumns.map((c) => sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`).join(",")};
   `;
   await db.query(query);
   let totQuery = query;
@@ -207,7 +211,9 @@ export async function insertPlayersInDb(players: Players) {
     VALUES
     ${db.escape(playerParams)}
     ON DUPLICATE KEY UPDATE
-    ${playerColumns.map((c) => sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`).join(",")};
+    ${playerColumns
+      .map((c) => (c === "profile_image_url" ? "" : sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`))
+      .join(",")};
   `;
   await db.query(query);
   totQuery += query;
@@ -222,10 +228,12 @@ export async function insertPlayersInDb(players: Players) {
   totQuery += query;
 
   query = sql`
-    INSERT IGNORE INTO player_yearly_stats
+    INSERT INTO player_yearly_stats
     (${db.escapeId(playerYearlyStatsColumns)})
     VALUES
-    ${db.escape(playerYearlyStatsParams)};
+    ${db.escape(playerYearlyStatsParams)}
+    ON DUPLICATE KEY UPDATE
+    ${playerYearlyStatsColumns.map((c) => sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`).join(",")};
   `;
   await db.query(query);
   totQuery += query;
@@ -234,7 +242,9 @@ export async function insertPlayersInDb(players: Players) {
     INSERT IGNORE INTO player_race_stats
     (${db.escapeId(playerYearlyRaceStatsColumns)})
     VALUES
-    ${db.escape(playerYearlyRaceStatsParams)};
+    ${db.escape(playerYearlyRaceStatsParams)}
+    ON DUPLICATE KEY UPDATE
+    ${playerYearlyRaceStatsColumns.map((c) => sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`).join(",")};
     `;
   await db.query(query);
   totQuery += query;

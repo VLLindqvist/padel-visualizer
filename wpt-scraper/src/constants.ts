@@ -12,4 +12,4 @@ export const RACE_LINK = "https://www.worldpadeltour.com/en/race2021";
 export const TOURNAMENT_BASE_URL = "https://www.worldpadeltour.com/info-torneos";
 export const TOURNAMENT_PAGE_BASE_URL = "https://www.worldpadeltour.com/en/tournaments";
 export const PLAYER_BASE_URL = "https://www.worldpadeltour.com/en/players";
-export const FLAG_BASE_URL = "https://www.worldpadeltour.com/media/images/flags";
+export const FLAG_BASE_URL = "https://countryflagsapi.com/svg";

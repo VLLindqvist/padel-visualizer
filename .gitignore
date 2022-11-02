@@ -105,3 +105,5 @@ dist
 
 wpt-scraper/**/temp
 wpt-scraper/**/.dev
+
+.DS_Store

@@ -27,15 +27,21 @@
     "wpt-scraper-types": "file:../types"
   },
   "dependencies": {
+    "@tensorflow-models/body-pix": "^2.2.0",
+    "@tensorflow/tfjs-node": "^4.0.0",
+    "@tensorflow/tfjs-node-gpu": "^4.0.0",
+    "@upscalerjs/esrgan-legacy": "^1.0.0-beta.6",
     "cheerio": "^1.0.0-rc.12",
     "country-data": "^0.0.31",
     "dotenv": "^16.0.3",
     "form-data": "^4.0.0",
+    "jimp": "^0.16.2",
     "lodash.clonedeep": "^4.5.0",
     "luxon": "^3.0.4",
     "mysql2": "^2.3.3",
     "node-cache": "^5.1.2",
     "node-fetch": "^2.6.7",
-    "replace-special-characters": "^1.2.7"
+    "replace-special-characters": "^1.2.7",
+    "upscaler": "^1.0.0-beta.7"
   }
 }
