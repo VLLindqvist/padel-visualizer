@@ -14,18 +14,20 @@ IMAGE_SUFFIX = "_nobg.png"
 
 load_dotenv()  # take environment variables from .env.
 
-
-def getImageUrls(idsWithImagesFromServer: list[str] = None):
+def getDb():
     db = mysql.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASS"),
         database=os.getenv("DB_NAME"),
     )
-
     dbCursor = db.cursor()
+    return (db, dbCursor)
+
+def getImageUrls(idsWithImagesFromServer: list[str] = None):
+    (db, dbCursor) = getDb()
     dbCursor.execute(
-        "SELECT p.id, p.profile_image_url FROM players AS p WHERE p.profile_image_url IS NOT NULL ORDER BY p.rank")
+        "SELECT p.id, p.profile_image_url FROM players AS p WHERE p.profile_image_url IS NULL AND p.profile_image_url_wpt IS NOT NULL ORDER BY p.rank")
     # dbCursor.execute(
     #     "SELECT p.id, p.profile_image_url FROM players AS p WHERE p.profile_image_url IS NOT NULL AND p.id = 'juan-lebron'")
     res: list[str] = dbCursor.fetchall()
@@ -35,16 +37,19 @@ def getImageUrls(idsWithImagesFromServer: list[str] = None):
     return res
 
 def updateImageUrls(ids: list[str]):
-    db = mysql.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASS"),
-        database=os.getenv("DB_NAME"),
-    )
-
-    dbCursor = db.cursor()
+    (db, dbCursor) = getDb()
     for id in ids:
-        dbCursor.execute(f"UPDATE players AS p SET p.profile_image_url = '{id + IMAGE_SUFFIX}' WHERE p.id = '{id}'")
+        dbCursor.execute(
+            f"UPDATE players AS p SET p.profile_image_url='{id}{IMAGE_SUFFIX}' WHERE p.id = '{id}'"
+        )
+    db.commit()
+    db.close()
+
+def removeWptImage(id: str):
+    (db, dbCursor) = getDb()
+    dbCursor.execute(
+        f"UPDATE players AS p SET p.profile_image_url_wpt=NULL WHERE p.id = '{id}'"
+    )
     db.commit()
     db.close()
 
@@ -82,8 +87,16 @@ restorer = GFPGANer(
         upscale=2,
         channel_multiplier=2)
 
+removeFromDataArr = []
+
 for (id, url) in sqlDataArr:
-    imgData = requests.get(url).content
+    res = requests.get(url)
+    if not res.ok:
+        removeWptImage(id)
+        removeFromDataArr.append(id)
+        continue
+
+    imgData = res.content
     restored = restoreFace(restorer, imgData)
     imageNoBackground = removeBackground(restored)
 
@@ -94,4 +107,5 @@ for (id, url) in sqlDataArr:
 
 sftp.disconnect()
 
-updateImageUrls(sqlDataArr)
+sqlDataArr = [d for d in sqlDataArr if removeFromDataArr.count(d) == 0]
+updateImageUrls([id for (id, _) in sqlDataArr])

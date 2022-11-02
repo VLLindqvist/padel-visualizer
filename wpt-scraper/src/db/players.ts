@@ -161,7 +161,7 @@ export async function insertPlayersInDb(players: Players) {
     "last_name",
     "points",
     "rank",
-    "profile_image_url",
+    "profile_image_url_wpt",
     "country",
     "birthplace",
     "birthdate",
@@ -211,9 +211,7 @@ export async function insertPlayersInDb(players: Players) {
     VALUES
     ${db.escape(playerParams)}
     ON DUPLICATE KEY UPDATE
-    ${playerColumns
-      .map((c) => (c === "profile_image_url" ? "" : sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`))
-      .join(",")};
+    ${playerColumns.map((c) => sql`${db.escapeId(c)}=VALUES(${db.escapeId(c)})`).join(",")};
   `;
   await db.query(query);
   totQuery += query;
